@@ -4,14 +4,15 @@ use ggez::*;
 use glam::*;
 use rand::Rng;
 
-const G:f32 = 6.674e-11;
+const G: f32 = 6.674e-11;
+const g: f32 = 9.81;
 
 #[derive(Clone, Copy, Debug)]
 struct Pendulum {
     length: f32,
     angle: f32,
-    velocity: Vec2,
-    acceleration: Vec2,
+    angle_velocity: f32,
+    angle_acceleration: f32,
     mass: f32,
     color: graphics::Color,
 }
@@ -19,15 +20,14 @@ struct Pendulum {
 impl Pendulum {
     fn new(ctx: &Context) -> Pendulum {
         let mut rng = rand::thread_rng();
-        let length: f32 = rng.gen_range(50.0..100.0);
+        let length: f32 = rng.gen_range(50.0..200.0);
         let angle: f32 = rng.gen_range(0.0..2.0 * PI);
-        let velocity: f32 = rng.gen_range(0.0..1.0);
-        let mass: f32 = rng.gen_range(10.0..15.0);
+        let mass: f32 = rng.gen_range(10.0..50.0);
         Pendulum {
             length,
             angle,
-            velocity: vec2(velocity * (angle+PI/2.0).sin(), velocity * (angle+PI/2.0).cos()),
-            acceleration: vec2(0.0, 0.0),
+            angle_acceleration: 0.0,
+            angle_velocity: 0.0,
             mass,
             color: graphics::Color::WHITE,
         }
@@ -40,10 +40,6 @@ impl Pendulum {
         self.angle = angle;
         self
     }
-    fn with_velocity(mut self, velocity: Vec2) -> Pendulum {
-        self.velocity = velocity;
-        self
-    }
     fn with_mass(mut self, mass: f32) -> Pendulum {
         self.mass = mass;
         self
@@ -52,20 +48,60 @@ impl Pendulum {
         self.color = color;
         self
     }
-    fn calculate_force(&mut self, other: &Pendulum) {
-        //self.acceleration = vec2(0.0, 0.0);
-        //let r_squared = self.length.distance_squared(other.length);
-        //let normal = -(self.length - other.length).normalize();
-        //self.acceleration +=
-        //    (((G * (self.mass) * (other.mass)) / r_squared)  * normal)
-        //        / self.mass;
+    fn calculate_force(&mut self, num: usize, other: &Pendulum) {
+        if num == 0 {
+            let mass_1 = self.mass;
+            let length_1 = self.length;
+            let angle_1 = self.angle;
+            let angle_velocity_1 = self.angle_velocity;
+            let mass_2 = other.mass;
+            let length_2 = other.length;
+            let angle_2 = other.angle;
+            let angle_velocity_2 = other.angle_velocity;
+            self.angle_acceleration = (-g * (2.0 * mass_1 + mass_2) * angle_1.sin()
+                - mass_2 * g * (angle_1 - 2.0 * angle_2).sin()
+                - 2.0
+                    * (angle_1 - angle_2).sin()
+                    * mass_2
+                    * (angle_velocity_2 * angle_velocity_2 * length_2
+                        + angle_velocity_1
+                            * angle_velocity_1
+                            * length_1
+                            * (angle_1 - angle_2).cos()))
+                / (length_1
+                    * (2.0 * mass_1 + mass_2 - mass_2 * (2.0 * angle_1 - 2.0 * angle_2).cos()));
+        } else if num == 1 {
+            let mass_1 = other.mass;
+            let length_1 = other.length;
+            let angle_1 = other.angle;
+            let angle_velocity_1 = other.angle_velocity;
+            let mass_2 = self.mass;
+            let length_2 = self.length;
+            let angle_2 = self.angle;
+            let angle_velocity_2 = self.angle_velocity;
+            self.angle_acceleration = (2.0
+                * (angle_1 - angle_2).sin()
+                * (angle_velocity_1 * angle_velocity_1 * length_1 * (mass_1 + mass_2)
+                    + g * (mass_1 + mass_2) * angle_1.cos()
+                    + angle_velocity_2
+                        * angle_velocity_2
+                        * length_2
+                        * mass_2
+                        * (angle_1 - angle_2).cos()))
+                / (length_1
+                    * (2.0 * mass_1 + mass_2 - mass_2 * (2.0 * angle_1 - 2.0 * angle_2).cos()));
+        }
     }
     fn update(&mut self, dt: f32) {
-        //self.velocity += self.acceleration * dt;
-        //self.length += self.velocity * dt;
+        self.angle_velocity += self.angle_acceleration * dt;
+        self.angle += self.angle_velocity * dt;
     }
     fn end_point(&self, start_point: Vec2) -> Vec2 {
-        start_point + vec2(self.length * self.angle.sin(), self.length * self.angle.cos())
+        start_point
+            + vec2(
+                self.length * self.angle.sin(),
+                self.length * self.angle.cos(),
+            )
     }
     fn draw_line(self, ctx: &Context, start_point: Vec2) -> GameResult<graphics::Mesh> {
         graphics::Mesh::new_line(
@@ -90,18 +126,21 @@ impl Pendulum {
 struct State {
     dt: std::time::Duration,
     pendulums: Vec<Pendulum>,
+    points: Vec<Vec2>,
 }
 
 impl State {
     fn new(ctx: &mut Context) -> GameResult<State> {
         let mut rng = rand::thread_rng();
         let mut pendulums: Vec<Pendulum> = vec![];
+        let mut points: Vec<Vec2> = vec![];
         for _ in 0..2 {
             pendulums.push(Pendulum::new(&ctx));
         }
         Ok(State {
             dt: ctx.time.delta(),
             pendulums,
+            points,
         })
     }
 }
@@ -109,19 +148,22 @@ impl State {
 impl ggez::event::EventHandler<GameError> for State {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
         self.dt = ctx.time.delta();
-        // //Determine forces
-        // for i in 0..self.pendulums.len() {
-        //     for j in 0..self.pendulums.len() {
-        //         if i != j {
-        //             let other = self.pendulums[j].clone();
-        //             self.pendulums[i].calculate_force(&other);
-        //         }
-        //     }
-        // }
-        // //Update velocity/position
-        // for i in 0..self.pendulums.len() {
-        //     self.pendulums[i].update(10.0);
-        // }
+
+        let mut other = self.pendulums[1].clone();
+        self.pendulums[0].calculate_force(0, &other);
+        other = self.pendulums[0].clone();
+        self.pendulums[1].calculate_force(1, &other);
+
+        self.pendulums[0].update(1.0 / 15.0);
+        self.pendulums[1].update(1.0 / 15.0);
+
+        self.points
+            .push(self.pendulums[1].end_point(self.pendulums[0].end_point(vec2(0.0, 0.0))));
+
+        if self.points.len() > 200 {
+            self.points.remove(0);
+        }
+
         Ok(())
     }
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
@@ -178,7 +220,7 @@ impl ggez::event::EventHandler<GameError> for State {
         // //    self.objects[0],
         // //);
 
-        let mut start_point: Vec2 = vec2(width/2.0,height/2.0);
+        let mut start_point: Vec2 = vec2(width / 2.0, height / 2.0);
         for object in &self.pendulums {
             canvas.draw(
                 &object.draw_line(&ctx, start_point).unwrap(),
@@ -195,6 +237,20 @@ impl ggez::event::EventHandler<GameError> for State {
         }
         // println!();
 
+        for point in &self.points {
+            canvas.draw(
+                &graphics::Mesh::new_circle(
+                    ctx,
+                    graphics::DrawMode::fill(),
+                    (vec2(width / 2.0, height / 2.0)+*point),
+                    1.0,
+                    2.0,
+                    graphics::Color::WHITE,
+                )
+                .unwrap(),
+                graphics::DrawParam::default(),
+            );
+        }
         canvas.finish(ctx)?;
 
         Ok(())
